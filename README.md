@@ -2,6 +2,8 @@
 
 Lightning-fast multi-agent coding CLI. Direct LLM calls. No middleware. Open source.
 
+[![x10 demo](https://img.youtube.com/vi/-O7IlQsEsF8/maxresdefault.jpg)](https://youtu.be/-O7IlQsEsF8)
+
 ```bash
 x10 "fix the null pointer in auth.go"
 x10 -n 3 "refactor the API layer, add tests, and update docs"
