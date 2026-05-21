@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"x10/agent"
 	"x10/config"
 	"x10/index"
 	"x10/orchestrator"
@@ -75,15 +76,6 @@ func main() {
 			}
 
 			model := flagModel
-			if model == "" {
-				model = cfg.DefaultModel
-			}
-
-			provider, err := makeProvider(model, cfg)
-			if err != nil {
-				return err
-			}
-
 			workdir := flagWorkdir
 			if workdir == "" {
 				workdir, _ = os.Getwd()
@@ -123,6 +115,44 @@ func main() {
 				}
 			} else {
 				registry = tools.New()
+			}
+
+			// Adaptive model selection: if no explicit model given, estimate task complexity
+			if model == "" {
+				if len(args) == 1 && codeIdx != nil {
+					// We have a task and index: estimate complexity
+					taskStr, _ := readStdinWithImageDetection(args[0])
+					taskStr = injectImageFromPath(taskStr)
+					
+					// Extract plain text from image if present
+					if strings.HasPrefix(taskStr, "[IMAGE]") {
+						lines := strings.Split(taskStr, "\n")
+						var endIdx int
+						for i, line := range lines {
+							if line == "[END_IMAGE]" {
+								endIdx = i
+								break
+							}
+						}
+						if endIdx > 0 && endIdx+1 < len(lines) {
+							taskStr = strings.TrimSpace(strings.Join(lines[endIdx+1:], "\n"))
+						}
+					}
+					
+					strategy := agent.DefaultStrategy()
+					model = strategy.SelectModel(taskStr, codeIdx)
+				} else {
+					model = cfg.DefaultModel
+				}
+			}
+
+			if model == "" {
+				model = "claude-haiku-4-5-20251001"
+			}
+
+			provider, err := makeProvider(model, cfg)
+			if err != nil {
+				return err
 			}
 
 			renderer := ui.New(flagAgents > 1)

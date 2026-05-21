@@ -14,7 +14,7 @@ import (
 // any tool calls.
 func (idx *Index) BuildRichContext(task string, maxSymbols int) (string, error) {
 	if maxSymbols <= 0 {
-		maxSymbols = 20
+		maxSymbols = 12
 	}
 
 	var sb strings.Builder
@@ -70,7 +70,7 @@ func (idx *Index) buildFileTree() string {
 
 	var lines []string
 	filepath.WalkDir(idx.workspaceDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || len(lines) > 150 {
+		if err != nil || len(lines) > 100 {
 			return nil
 		}
 		if d.IsDir() {
@@ -94,8 +94,8 @@ func (idx *Index) readReadme() string {
 			continue
 		}
 		lines := strings.Split(string(data), "\n")
-		if len(lines) > 80 {
-			lines = lines[:80]
+		if len(lines) > 50 {
+			lines = lines[:50]
 		}
 		return strings.Join(lines, "\n")
 	}

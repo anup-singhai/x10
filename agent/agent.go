@@ -216,9 +216,10 @@ func (a *Agent) loop(ctx context.Context, task string, ch chan<- Event) {
 // original order. Returns nil if ctx is cancelled.
 func (a *Agent) executeParallel(ctx context.Context, calls []providers.ToolUseCall, ch chan<- Event) []interface{} {
 	type result struct {
-		idx    int
-		id     string
-		output string
+		idx       int
+		id        string
+		output    string // full output sent to UI
+		llmOutput string // compact version sent back to LLM
 	}
 
 	results := make([]result, len(calls))
@@ -239,10 +240,21 @@ func (a *Agent) executeParallel(ctx context.Context, calls []providers.ToolUseCa
 				output = fmt.Sprintf("error: %v", err)
 			}
 
+			// UI gets full output (diff rendering); LLM gets compact summary
+			llmOutput := output
+			if strings.HasPrefix(output, "DIFF:") {
+				// "DIFF:path/to/file\n+lines..." → "updated path/to/file"
+				firstLine := output
+				if nl := strings.IndexByte(output, '\n'); nl != -1 {
+					firstLine = output[:nl]
+				}
+				llmOutput = "updated " + strings.TrimPrefix(firstLine, "DIFF:")
+			}
+
 			ch <- Event{Type: EventToolResult, AgentID: a.ID, Result: output}
 
 			mu.Lock()
-			results[idx] = result{idx: idx, id: tc.ID, output: output}
+			results[idx] = result{idx: idx, id: tc.ID, output: output, llmOutput: llmOutput}
 			mu.Unlock()
 		}(i, tc)
 	}
@@ -266,13 +278,13 @@ func (a *Agent) executeParallel(ctx context.Context, calls []providers.ToolUseCa
 		return nil
 	}
 
-	// build tool_result blocks in original order
+	// build tool_result blocks in original order (use compact llmOutput for history)
 	out := make([]interface{}, len(results))
 	for _, r := range results {
 		out[r.idx] = map[string]interface{}{
 			"type":        "tool_result",
 			"tool_use_id": r.id,
-			"content":     r.output,
+			"content":     r.llmOutput,
 		}
 	}
 	return out

@@ -109,7 +109,7 @@ The index lives at `.x10/index.db` (SQLite + FTS5, local only, never leaves your
 | Anthropic | `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-6` |
 | OpenAI    | `gpt-4o`, `gpt-4o-mini`, `o1`, `o3`, etc          |
 
-Default: `claude-haiku-4-5-20251001` (fastest). Use `-m claude-sonnet-4-6` for harder tasks.
+Default: `claude-haiku-4-5-20251001` (fastest). Adaptive selection picks `claude-sonnet-4-6` or `claude-opus-4-6` for complex tasks automatically.
 
 ## Multi-agent
 

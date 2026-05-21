@@ -159,13 +159,27 @@ func readFile(workdir string, input map[string]interface{}) (string, error) {
 
 func writeFile(workdir string, input map[string]interface{}) (string, error) {
 	p := resolvePath(workdir, str(input, "path"))
+	newContent := str(input, "content")
+
+	// Read existing content for diff
+	var oldContent string
+	if data, err := os.ReadFile(p); err == nil {
+		oldContent = string(data)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(p, []byte(str(input, "content")), 0644); err != nil {
+	if err := os.WriteFile(p, []byte(newContent), 0644); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("written %s", p), nil
+
+	rel, err := filepath.Rel(workdir, p)
+	if err != nil {
+		rel = p
+	}
+	diff := computeLineDiff(oldContent, newContent, 3)
+	return "DIFF:" + rel + "\n" + diff, nil
 }
 
 func editFile(workdir string, input map[string]interface{}) (string, error) {
@@ -190,7 +204,13 @@ func editFile(workdir string, input map[string]interface{}) (string, error) {
 	if err := os.WriteFile(p, []byte(updated), 0644); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("edited %s", p), nil
+
+	rel, err := filepath.Rel(workdir, p)
+	if err != nil {
+		rel = p
+	}
+	diff := computeLineDiff(old, new, 2)
+	return "DIFF:" + rel + "\n" + diff, nil
 }
 
 func bash(workdir string, input map[string]interface{}) (string, error) {
@@ -261,4 +281,130 @@ func resolvePath(workdir, p string) string {
 		return p
 	}
 	return filepath.Join(workdir, p)
+}
+
+// ── diff helpers ──────────────────────────────────────────────────────────────
+
+const diffMaxLines = 300 // per side; larger files get summary only
+
+type diffLine struct {
+	op   byte // '+', '-', ' '
+	text string
+}
+
+// computeLineDiff returns a diff string with '+'/'-'/' ' prefixed lines.
+// context is the number of unchanged lines to show around each change.
+func computeLineDiff(oldText, newText string, context int) string {
+	oldLines := splitLines(oldText)
+	newLines := splitLines(newText)
+
+	// New file — show up to 60 lines as added
+	if len(oldLines) == 0 {
+		limit := len(newLines)
+		if limit > 60 {
+			limit = 60
+		}
+		var sb strings.Builder
+		for _, l := range newLines[:limit] {
+			sb.WriteByte('+')
+			sb.WriteString(l)
+			sb.WriteByte('\n')
+		}
+		if len(newLines) > 60 {
+			fmt.Fprintf(&sb, "+... (%d more lines)\n", len(newLines)-60)
+		}
+		return sb.String()
+	}
+
+	// Too large for LCS — show summary
+	if len(oldLines) > diffMaxLines || len(newLines) > diffMaxLines {
+		return fmt.Sprintf("~(%d lines → %d lines)\n", len(oldLines), len(newLines))
+	}
+
+	ops := lcsLineDiff(oldLines, newLines)
+	return formatDiffOps(ops, context)
+}
+
+// lcsLineDiff computes a line-level diff via LCS.
+func lcsLineDiff(old, new []string) []diffLine {
+	m, n := len(old), len(new)
+	dp := make([][]int, m+1)
+	for i := range dp {
+		dp[i] = make([]int, n+1)
+	}
+	for i := 1; i <= m; i++ {
+		for j := 1; j <= n; j++ {
+			if old[i-1] == new[j-1] {
+				dp[i][j] = dp[i-1][j-1] + 1
+			} else if dp[i-1][j] >= dp[i][j-1] {
+				dp[i][j] = dp[i-1][j]
+			} else {
+				dp[i][j] = dp[i][j-1]
+			}
+		}
+	}
+
+	var ops []diffLine
+	i, j := m, n
+	for i > 0 || j > 0 {
+		if i > 0 && j > 0 && old[i-1] == new[j-1] {
+			ops = append(ops, diffLine{' ', old[i-1]})
+			i--
+			j--
+		} else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
+			ops = append(ops, diffLine{'+', new[j-1]})
+			j--
+		} else {
+			ops = append(ops, diffLine{'-', old[i-1]})
+			i--
+		}
+	}
+	for l, r := 0, len(ops)-1; l < r; l, r = l+1, r-1 {
+		ops[l], ops[r] = ops[r], ops[l]
+	}
+	return ops
+}
+
+// formatDiffOps renders ops with context-line collapsing.
+func formatDiffOps(ops []diffLine, ctx int) string {
+	n := len(ops)
+	shown := make([]bool, n)
+	hasChange := false
+	for i, op := range ops {
+		if op.op != ' ' {
+			hasChange = true
+			for j := i - ctx; j <= i+ctx; j++ {
+				if j >= 0 && j < n {
+					shown[j] = true
+				}
+			}
+		}
+	}
+	if !hasChange {
+		return ""
+	}
+
+	var sb strings.Builder
+	skipped := 0
+	for i, op := range ops {
+		if shown[i] {
+			if skipped > 0 {
+				fmt.Fprintf(&sb, " ...(%d lines)\n", skipped)
+				skipped = 0
+			}
+			sb.WriteByte(op.op)
+			sb.WriteString(op.text)
+			sb.WriteByte('\n')
+		} else {
+			skipped++
+		}
+	}
+	return sb.String()
+}
+
+func splitLines(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(s, "\n"), "\n")
 }

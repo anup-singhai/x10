@@ -23,6 +23,11 @@ var (
 	styleError  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("9"))
 	styleDone   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 
+	// diff colors
+	styleDiffAdded   = lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("156"))
+	styleDiffRemoved = lipgloss.NewStyle().Background(lipgloss.Color("52")).Foreground(lipgloss.Color("203"))
+	styleDiffCtx     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
 	styleH1   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	styleH2   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 	styleH3   = lipgloss.NewStyle().Bold(true)
@@ -80,9 +85,13 @@ func (r *Renderer) Handle(ev orchestrator.CellEvent) {
 
 	case agent.EventToolResult:
 		r.stopSpinner()
-		preview := firstLine(ev.Result)
-		if preview != "" {
-			fmt.Printf("%s %s\n", styleDim.Render("◀"), styleResult.Render(preview))
+		if strings.HasPrefix(ev.Result, "DIFF:") {
+			r.renderDiff(ev.Result)
+		} else {
+			preview := firstLine(ev.Result)
+			if preview != "" {
+				fmt.Printf("%s %s\n", styleDim.Render("◀"), styleResult.Render(preview))
+			}
 		}
 		r.startSpinner("") // spinner while waiting for next LLM response
 
@@ -212,6 +221,53 @@ func (r *Renderer) stopSpinner() {
 		close(s.stop)
 		<-s.done // wait for clear to finish before printing
 	}
+}
+
+// ── diff renderer ─────────────────────────────────────────────────────────────
+
+func (r *Renderer) renderDiff(result string) {
+	lines := strings.SplitN(result, "\n", 2)
+	header := strings.TrimPrefix(lines[0], "DIFF:")
+	fmt.Printf("%s %s\n", styleDim.Render("◀"), styleAction.Render(header))
+
+	if len(lines) < 2 || strings.TrimSpace(lines[1]) == "" {
+		return
+	}
+
+	tw := termWidth()
+	diffLines := strings.Split(strings.TrimRight(lines[1], "\n"), "\n")
+	shown := 0
+	for _, line := range diffLines {
+		if line == "" {
+			continue
+		}
+		if shown >= 60 {
+			fmt.Println(styleDim.Render("  … (truncated)"))
+			break
+		}
+		switch line[0] {
+		case '+':
+			text := padOrTrunc("+ "+line[1:], tw)
+			fmt.Println(styleDiffAdded.Render(text))
+		case '-':
+			text := padOrTrunc("- "+line[1:], tw)
+			fmt.Println(styleDiffRemoved.Render(text))
+		default:
+			fmt.Println(styleDiffCtx.Render("  " + line[1:]))
+		}
+		shown++
+	}
+}
+
+// padOrTrunc pads s to width w (for full-width background color blocks).
+func padOrTrunc(s string, w int) string {
+	if w <= 0 {
+		return s
+	}
+	if len(s) < w {
+		return s + strings.Repeat(" ", w-len(s))
+	}
+	return s[:w]
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
