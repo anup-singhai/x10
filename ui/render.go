@@ -31,6 +31,16 @@ var (
 	// image attachment
 	styleImg = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 
+	// tool result styling
+	styleToolRead    = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)  // cyan
+	styleToolWrite   = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)  // green
+	styleToolError   = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)   // red
+	styleToolSearch  = lipgloss.NewStyle().Foreground(lipgloss.Color("13")).Bold(true)  // magenta
+	styleFileName    = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))             // bright white
+	styleFilePath    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))              // dim
+	styleLineNum     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))              // dim
+	styleMeta        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))              // dim
+
 	styleH1   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	styleH2   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 	styleH3   = lipgloss.NewStyle().Bold(true)
@@ -91,10 +101,8 @@ func (r *Renderer) Handle(ev orchestrator.CellEvent) {
 		if strings.HasPrefix(ev.Result, "DIFF:") {
 			r.renderDiff(ev.Result)
 		} else {
-			preview := firstLine(ev.Result)
-			if preview != "" {
-				fmt.Printf("%s %s\n", styleDim.Render("◀"), styleResult.Render(preview))
-			}
+			// Enhanced tool result rendering
+			r.renderToolResult(ev.Result)
 		}
 		r.startSpinner("") // spinner while waiting for next LLM response
 
@@ -224,6 +232,90 @@ func (r *Renderer) stopSpinner() {
 		close(s.stop)
 		<-s.done // wait for clear to finish before printing
 	}
+}
+
+// ── diff renderer ─────────────────────────────────────────────────────────────
+
+func (r *Renderer) renderToolResult(result string) {
+	result = strings.TrimSpace(result)
+	if result == "" {
+		return
+	}
+
+	lines := strings.SplitN(result, "\n", 2)
+	firstLine := lines[0]
+
+	// Detect result type and render accordingly
+	if strings.HasPrefix(firstLine, "error:") {
+		// Error result
+		fmt.Printf("  %s %s\n", styleToolError.Render("✗"), styleToolError.Render(firstLine))
+		if len(lines) > 1 {
+			detail := strings.TrimSpace(lines[1])
+			if detail != "" && len(detail) < 100 {
+				fmt.Printf("    %s\n", styleMeta.Render(detail))
+			}
+		}
+	} else if strings.HasPrefix(firstLine, "found") && strings.Contains(firstLine, "match") {
+		// Search/glob result
+		fmt.Printf("  %s %s\n", styleToolSearch.Render("🔍"), styleToolSearch.Render(firstLine))
+		if len(lines) > 1 {
+			// Show matches compactly
+			matchLines := strings.Split(strings.TrimSpace(lines[1]), "\n")
+			maxShow := 5
+			for i, m := range matchLines {
+				if i >= maxShow {
+					fmt.Printf("    %s\n", styleMeta.Render(fmt.Sprintf("… and %d more", len(matchLines)-i)))
+					break
+				}
+				fmt.Printf("    %s\n", styleFilePath.Render(m))
+			}
+		}
+	} else if strings.HasPrefix(firstLine, "no ") && strings.Contains(firstLine, "found") {
+		// Not found result
+		fmt.Printf("  %s %s\n", styleMeta.Render("○"), styleMeta.Render(firstLine))
+	} else if strings.HasPrefix(firstLine, "read ") {
+		// File read result
+		fmt.Printf("  %s %s\n", styleToolRead.Render("📖"), styleToolRead.Render(firstLine))
+		if len(lines) > 1 {
+			content := strings.TrimSpace(lines[1])
+			preview := r.previewContent(content, 10)
+			if preview != "" {
+				for _, line := range strings.Split(preview, "\n") {
+					fmt.Printf("    %s\n", stylePre.Render(line))
+				}
+			}
+		}
+	} else if strings.HasPrefix(firstLine, "[") && strings.Contains(firstLine, "]") {
+		// JSON result (symbol lookup, etc)
+		fmt.Printf("  %s %s\n", styleToolSearch.Render("⚙"), styleToolSearch.Render("symbol found"))
+		// Show compact preview
+		if len(result) < 200 {
+			fmt.Printf("    %s\n", stylePre.Render(result))
+		} else {
+			fmt.Printf("    %s\n", styleMeta.Render("(use read_file or search for details)"))
+		}
+	} else {
+		// Generic result
+		fmt.Printf("  %s %s\n", styleDim.Render("◀"), styleResult.Render(firstLine))
+		if len(lines) > 1 {
+			detail := strings.TrimSpace(lines[1])
+			if detail != "" && len(detail) < 150 {
+				for _, line := range strings.Split(detail, "\n")[:5] {
+					fmt.Printf("    %s\n", styleMeta.Render(line))
+				}
+			}
+		}
+	}
+}
+
+// previewContent shows first N lines of content
+func (r *Renderer) previewContent(content string, maxLines int) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		lines = append(lines, fmt.Sprintf("… (%d more lines)", strings.Count(content, "\n")-maxLines))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ── diff renderer ─────────────────────────────────────────────────────────────

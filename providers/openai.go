@@ -13,15 +13,24 @@ import (
 const openaiAPI = "https://api.openai.com/v1/chat/completions"
 
 type OpenAI struct {
-	APIKey string
-	client *http.Client
+	APIKey  string
+	baseURL string
+	client  *http.Client
 }
 
 func NewOpenAI(apiKey string) *OpenAI {
-	return &OpenAI{
-		APIKey: apiKey,
-		client: &http.Client{},
+	return &OpenAI{APIKey: apiKey, baseURL: openaiAPI, client: &http.Client{}}
+}
+
+// NewOpenAICompat creates a provider that speaks the OpenAI chat/completions
+// wire format against any base URL (Ollama, LM Studio, llama.cpp, etc.).
+// apiKey may be empty for servers that don't require authentication.
+func NewOpenAICompat(baseURL, apiKey string) *OpenAI {
+	u := strings.TrimRight(baseURL, "/")
+	if !strings.HasSuffix(u, "/chat/completions") {
+		u += "/chat/completions"
 	}
+	return &OpenAI{APIKey: apiKey, baseURL: u, client: &http.Client{}}
 }
 
 func (o *OpenAI) Stream(ctx context.Context, model string, messages []Message, tools []Tool, systemPrompt string) (<-chan Event, error) {
@@ -41,7 +50,7 @@ func (o *OpenAI) Stream(ctx context.Context, model string, messages []Message, t
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", openaiAPI, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", o.baseURL, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}

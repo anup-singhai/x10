@@ -9,7 +9,11 @@ import (
 type Config struct {
 	AnthropicKey string `json:"anthropic_key,omitempty"`
 	OpenAIKey    string `json:"openai_key,omitempty"`
+	GroqKey      string `json:"groq_key,omitempty"`
+	TogetherKey  string `json:"together_key,omitempty"`
 	DefaultModel string `json:"default_model,omitempty"`
+	OllamaURL    string `json:"ollama_url,omitempty"`   // default: http://localhost:11434/v1
+	LMStudioURL  string `json:"lmstudio_url,omitempty"` // default: http://localhost:1234/v1
 }
 
 func Dir() string {
@@ -25,7 +29,9 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		AnthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
 		OpenAIKey:    os.Getenv("OPENAI_API_KEY"),
-		DefaultModel: "claude-haiku-4-5-20251001",
+		GroqKey:      os.Getenv("GROQ_API_KEY"),
+		TogetherKey:  os.Getenv("TOGETHER_API_KEY"),
+		DefaultModel: "claude-sonnet-4-6",
 	}
 
 	data, err := os.ReadFile(path())
@@ -46,6 +52,18 @@ func Load() (*Config, error) {
 	}
 	if cfg.OpenAIKey == "" {
 		cfg.OpenAIKey = fileCfg.OpenAIKey
+	}
+	if cfg.GroqKey == "" {
+		cfg.GroqKey = fileCfg.GroqKey
+	}
+	if cfg.TogetherKey == "" {
+		cfg.TogetherKey = fileCfg.TogetherKey
+	}
+	if fileCfg.OllamaURL != "" {
+		cfg.OllamaURL = fileCfg.OllamaURL
+	}
+	if fileCfg.LMStudioURL != "" {
+		cfg.LMStudioURL = fileCfg.LMStudioURL
 	}
 	if fileCfg.DefaultModel != "" {
 		cfg.DefaultModel = fileCfg.DefaultModel
@@ -71,6 +89,14 @@ func Set(key, value string) error {
 		cfg.OpenAIKey = value
 	case "default-model":
 		cfg.DefaultModel = value
+	case "groq-key":
+		cfg.GroqKey = value
+	case "together-key":
+		cfg.TogetherKey = value
+	case "ollama-url":
+		cfg.OllamaURL = value
+	case "lmstudio-url":
+		cfg.LMStudioURL = value
 	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")

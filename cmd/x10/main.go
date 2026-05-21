@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"x10/agent"
 	"x10/config"
 	"x10/index"
+	"x10/local"
 	"x10/orchestrator"
 	"x10/providers"
 	"x10/tools"
@@ -156,7 +156,7 @@ func main() {
 				model = "claude-sonnet-4-6"
 			}
 
-			provider, err := makeProvider(model, cfg)
+			provider, model, err := makeProvider(model, cfg)
 			if err != nil {
 				return err
 			}
@@ -230,7 +230,50 @@ func main() {
 	}
 	configCmd.AddCommand(configSetCmd)
 
-	root.AddCommand(runCmd, indexCmd, configCmd)
+	// ── models command ────────────────────────────────────────────────────
+	modelsCmd := &cobra.Command{
+		Use:   "models",
+		Short: "Manage local SLMs",
+	}
+
+	modelsListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List available local models",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println("Available local models (use with: x10 -m local:<id>)\n")
+			for _, m := range local.Catalog {
+				tool := ""
+				if m.ToolCall {
+					tool = " ✓ tools"
+				}
+				fmt.Printf("  %-18s  %-8s  %s%s\n", m.ID, m.Size, m.Desc, tool)
+			}
+			fmt.Println("\nModels are cached in ~/.x10/models/ after first download.")
+			return nil
+		},
+	}
+
+	modelsPullCmd := &cobra.Command{
+		Use:   "pull <id>",
+		Short: "Download a local model",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			m, ok := local.FindModel(args[0])
+			if !ok {
+				return fmt.Errorf("unknown model %q — run: x10 models list", args[0])
+			}
+			fmt.Printf("pulling %s (%s)...\n", m.Name, m.Size)
+			_, _, err := local.EnsureReady(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("ready: %s\n", m.ID)
+			return nil
+		},
+	}
+
+	modelsCmd.AddCommand(modelsListCmd, modelsPullCmd)
+	root.AddCommand(runCmd, indexCmd, configCmd, modelsCmd)
 	root.RunE = runCmd.RunE
 	root.Flags().AddFlagSet(runCmd.Flags())
 
@@ -360,13 +403,16 @@ func detectImageInput() (string, string, bool) {
 }
 
 func repl(ctx context.Context, sess *orchestrator.Session, renderer *ui.Renderer) error {
-	scanner := bufio.NewScanner(os.Stdin)
-	ui.PrintPrompt()
-
-	for scanner.Scan() {
-		input := strings.TrimSpace(scanner.Text())
+	for {
+		input, err := ui.ReadLine()
+		if err == ui.ErrInterrupt {
+			fmt.Println("bye")
+			return nil
+		}
+		if err != nil {
+			return nil
+		}
 		if input == "" {
-			ui.PrintPrompt()
 			continue
 		}
 		if input == "/exit" || input == "/quit" {
@@ -376,22 +422,10 @@ func repl(ctx context.Context, sess *orchestrator.Session, renderer *ui.Renderer
 		if input == "/clear" {
 			sess.Reset()
 			fmt.Println("conversation cleared")
-			ui.PrintPrompt()
 			continue
 		}
 
-		origInput := input
 		input = injectImageFromPath(input)
-
-		// If an image was injected, erase the ugly raw path and show clean display
-		if strings.HasPrefix(input, "[IMAGE]") && !strings.HasPrefix(origInput, "[IMAGE]") {
-			fname := imageFilenameFromInput(origInput)
-			taskText := origInput
-			if nl := strings.Index(input, "[END_IMAGE]"); nl != -1 {
-				taskText = strings.TrimSpace(input[nl+len("[END_IMAGE]"):])
-			}
-			ui.PrintImageInput(origInput, fname, taskText)
-		}
 
 		renderer.StartWaiting()
 		events := sess.Send(ctx, input)
@@ -401,10 +435,7 @@ func repl(ctx context.Context, sess *orchestrator.Session, renderer *ui.Renderer
 		if ctx.Err() != nil {
 			return nil
 		}
-
-		ui.PrintPrompt()
 	}
-	return nil
 }
 
 // injectImageFromPath scans the task string for an image file path (e.g. dragged
@@ -497,27 +528,84 @@ func imageFilenameFromInput(input string) string {
 	return ""
 }
 
-func makeProvider(model string, cfg *config.Config) (providers.Provider, error) {
+// makeProvider returns (provider, cleanModel, error).
+// cleanModel strips any provider prefix (e.g. "ollama:llama3.2" → "llama3.2").
+func makeProvider(model string, cfg *config.Config) (providers.Provider, string, error) {
 	switch {
+	// ── built-in local SLMs (managed by x10) ─────────────────────────────
+	case strings.HasPrefix(model, "local:"):
+		alias := strings.TrimPrefix(model, "local:")
+		apiBase, cleanModel, err := local.EnsureReady(context.Background(), alias)
+		if err != nil {
+			return nil, "", err
+		}
+		return providers.NewOpenAICompat(apiBase, ""), cleanModel, nil
+
+	// ── local LLMs (OpenAI-compatible) ────────────────────────────────────
+	case strings.HasPrefix(model, "ollama:"), strings.HasPrefix(model, "ollama/"):
+		clean := strings.TrimPrefix(strings.TrimPrefix(model, "ollama:"), "ollama/")
+		base := cfg.OllamaURL
+		if base == "" {
+			base = "http://localhost:11434/v1"
+		}
+		return providers.NewOpenAICompat(base, "ollama"), clean, nil
+
+	case strings.HasPrefix(model, "lmstudio:"), strings.HasPrefix(model, "lmstudio/"):
+		clean := strings.TrimPrefix(strings.TrimPrefix(model, "lmstudio:"), "lmstudio/")
+		base := cfg.LMStudioURL
+		if base == "" {
+			base = "http://localhost:1234/v1"
+		}
+		return providers.NewOpenAICompat(base, "lm-studio"), clean, nil
+
+	// generic OpenAI-compat: "http://host:port/v1:modelname"
+	case strings.HasPrefix(model, "http://"), strings.HasPrefix(model, "https://"):
+		parts := strings.SplitN(model, ":", 3)
+		if len(parts) == 3 {
+			base := parts[0] + ":" + parts[1]
+			clean := parts[2]
+			return providers.NewOpenAICompat(base, ""), clean, nil
+		}
+		return providers.NewOpenAICompat(model, ""), model, nil
+
+	// ── free/open model providers (no local install) ──────────────────────
+	case strings.HasPrefix(model, "groq:"), strings.HasPrefix(model, "groq/"):
+		clean := strings.TrimPrefix(strings.TrimPrefix(model, "groq:"), "groq/")
+		if cfg.GroqKey == "" {
+			return nil, "", fmt.Errorf("groq key not set — run: x10 config set groq-key <key>\nGet a free key at https://console.groq.com")
+		}
+		return providers.NewOpenAICompat("https://api.groq.com/openai/v1", cfg.GroqKey), clean, nil
+
+	case strings.HasPrefix(model, "together:"), strings.HasPrefix(model, "together/"):
+		clean := strings.TrimPrefix(strings.TrimPrefix(model, "together:"), "together/")
+		if cfg.TogetherKey == "" {
+			return nil, "", fmt.Errorf("together key not set — run: x10 config set together-key <key>")
+		}
+		return providers.NewOpenAICompat("https://api.together.xyz/v1", cfg.TogetherKey), clean, nil
+
+	// ── cloud providers ───────────────────────────────────────────────────
 	case strings.HasPrefix(model, "claude"):
 		if cfg.AnthropicKey == "" {
-			return nil, fmt.Errorf("anthropic key not set — run: x10 config set anthropic-key <key>")
+			return nil, "", fmt.Errorf("anthropic key not set — run: x10 config set anthropic-key <key>")
 		}
-		return providers.NewAnthropic(cfg.AnthropicKey), nil
+		return providers.NewAnthropic(cfg.AnthropicKey), model, nil
 
 	case strings.HasPrefix(model, "gpt"), strings.HasPrefix(model, "o1"), strings.HasPrefix(model, "o3"):
 		if cfg.OpenAIKey == "" {
-			return nil, fmt.Errorf("openai key not set — run: x10 config set openai-key <key>")
+			return nil, "", fmt.Errorf("openai key not set — run: x10 config set openai-key <key>")
 		}
-		return providers.NewOpenAI(cfg.OpenAIKey), nil
+		return providers.NewOpenAI(cfg.OpenAIKey), model, nil
 
 	default:
 		if cfg.AnthropicKey != "" {
-			return providers.NewAnthropic(cfg.AnthropicKey), nil
+			return providers.NewAnthropic(cfg.AnthropicKey), model, nil
 		}
 		if cfg.OpenAIKey != "" {
-			return providers.NewOpenAI(cfg.OpenAIKey), nil
+			return providers.NewOpenAI(cfg.OpenAIKey), model, nil
 		}
-		return nil, fmt.Errorf("no API key configured — run: x10 config set anthropic-key <key>")
+		if cfg.GroqKey != "" {
+			return providers.NewOpenAICompat("https://api.groq.com/openai/v1", cfg.GroqKey), model, nil
+		}
+		return nil, "", fmt.Errorf("no API key configured\n  Anthropic: x10 config set anthropic-key <key>\n  Free (Groq): x10 config set groq-key <key>  (get at console.groq.com)")
 	}
 }

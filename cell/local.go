@@ -59,13 +59,10 @@ func Spawn(cfg Config) (*Cell, error) {
 	// relevant code already in context — eliminates exploration round trips
 	if cfg.Index != nil {
 		idx := cfg.Index
-		a.WithContextBuilder(func(task string) string {
-			ctx, err := idx.BuildRichContext(task, 20)
-			if err != nil || ctx == "" {
-				return ""
-			}
-			return ctx
-		})
+		// Use dependency graph with 4KB token budget
+		graphCache := index.NewGraphCache(100)
+		contextBuilder := agent.ContextBuilderWithGraph(idx, 4096, graphCache)
+		a.WithContextBuilder(contextBuilder)
 	}
 
 	return &Cell{
