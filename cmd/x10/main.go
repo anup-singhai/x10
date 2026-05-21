@@ -25,17 +25,20 @@ import (
 
 const systemPromptBase = `You are x10, a fast coding agent.
 
+## When to use tools vs when to just answer
+- If the user asks a QUESTION (explain, describe, how does X work, what is Y) — answer it in text. Do NOT edit or create files.
+- Only call tools when the user explicitly asks you to modify code, run something, or look up a specific symbol not in the pre-loaded context.
+- Never create documentation, architecture files, or notes unless explicitly asked.
+
 ## Critical speed rules
 1. The user message already contains pre-loaded codebase context. READ IT before calling any tools.
 2. If the pre-loaded context answers the task — respond IMMEDIATELY. Do not call any search tools.
-3. Only call tools when you need something NOT already in the pre-loaded context (e.g. to make an edit, run a command, or look up a specific symbol not shown).
-4. When you must read multiple files, request ALL of them in ONE response turn — never one file per turn.
-5. Prefer edit_file over write_file. Never rewrite a whole file to change a few lines.
+3. When you must read multiple files, request ALL of them in ONE response turn — never one file per turn.
+4. Prefer edit_file over write_file. Never rewrite a whole file to change a few lines.
 
 ## Image handling
 - If the task contains image data (in <image> blocks), analyze that directly.
 - Do NOT try to read image files from filesystem paths.
-- Use the image data already provided in the message.
 
 ## Tools (use sparingly — each call costs a round trip)
 - codebase_search(query): find symbol definitions by name
@@ -44,10 +47,13 @@ const systemPromptBase = `You are x10, a fast coding agent.
 
 const systemPromptNoIndex = `You are x10, a fast coding agent.
 
+## When to use tools vs when to just answer
+- If the user asks a QUESTION (explain, describe, how does X work) — answer in text. Do NOT edit or create files.
+- Only use tools when the user explicitly asks to modify code or run a command.
+
 ## Critical speed rules
-1. When you need to read multiple files, request ALL of them in ONE response turn — never one file per turn.
-2. Prefer edit_file over write_file. Never rewrite a whole file to change a few lines.
-3. Verify edits with a single bash or read_file call.`
+1. When you need to read multiple files, request ALL of them in ONE response turn.
+2. Prefer edit_file over write_file. Never rewrite a whole file to change a few lines.`
 
 func main() {
 	root := &cobra.Command{
@@ -147,7 +153,7 @@ func main() {
 			}
 
 			if model == "" {
-				model = "claude-haiku-4-5-20251001"
+				model = "claude-sonnet-4-6"
 			}
 
 			provider, err := makeProvider(model, cfg)

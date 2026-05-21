@@ -16,13 +16,15 @@ type ModelStrategy struct {
 }
 
 // DefaultStrategy provides sensible defaults using Anthropic models.
+// Haiku is only used for tasks with near-zero complexity score (trivially simple).
+// Sonnet handles the vast majority of real tasks.
 func DefaultStrategy() ModelStrategy {
 	return ModelStrategy{
 		SimpleModel:       "claude-haiku-4-5-20251001",
 		StandardModel:     "claude-sonnet-4-6",
 		PremiumModel:      "claude-opus-4-6",
-		SimpleThreshold:   0.3,
-		StandardThreshold: 0.7,
+		SimpleThreshold:   0.1,  // very few tasks qualify — prevents dumb behavior
+		StandardThreshold: 0.75,
 	}
 }
 
