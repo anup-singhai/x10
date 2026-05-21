@@ -28,6 +28,9 @@ var (
 	styleDiffRemoved = lipgloss.NewStyle().Background(lipgloss.Color("52")).Foreground(lipgloss.Color("203"))
 	styleDiffCtx     = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
+	// image attachment
+	styleImg = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+
 	styleH1   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	styleH2   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
 	styleH3   = lipgloss.NewStyle().Bold(true)
@@ -283,6 +286,24 @@ func PrintBanner(model, workdir string, agents int) {
 
 func PrintPrompt() {
 	fmt.Print(styleDim.Render("\n> "))
+}
+
+// PrintImageInput erases the raw image path the user typed and replaces it with
+// a clean display: the blank line + "> ◈ filename.png  task text"
+func PrintImageInput(origInput, fname, taskText string) {
+	tw := termWidth()
+	// Lines occupied by "> " (2 chars) + the typed input
+	inputLines := (2 + len(origInput) + tw - 1) / tw
+	// +1 for the blank line PrintPrompt emits via its leading \n
+	totalLines := inputLines + 1
+
+	for i := 0; i < totalLines; i++ {
+		fmt.Print("\033[1A\033[2K") // cursor up 1, clear line
+	}
+
+	tag := styleImg.Render("◈ " + fname)
+	task := styleDim.Render(taskText)
+	fmt.Printf("\n%s %s  %s\n", styleDim.Render(">"), tag, task)
 }
 
 func firstLine(s string) string {

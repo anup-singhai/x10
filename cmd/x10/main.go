@@ -374,7 +374,18 @@ func repl(ctx context.Context, sess *orchestrator.Session, renderer *ui.Renderer
 			continue
 		}
 
+		origInput := input
 		input = injectImageFromPath(input)
+
+		// If an image was injected, erase the ugly raw path and show clean display
+		if strings.HasPrefix(input, "[IMAGE]") && !strings.HasPrefix(origInput, "[IMAGE]") {
+			fname := imageFilenameFromInput(origInput)
+			taskText := origInput
+			if nl := strings.Index(input, "[END_IMAGE]"); nl != -1 {
+				taskText = strings.TrimSpace(input[nl+len("[END_IMAGE]"):])
+			}
+			ui.PrintImageInput(origInput, fname, taskText)
+		}
 
 		renderer.StartWaiting()
 		events := sess.Send(ctx, input)
@@ -448,6 +459,36 @@ func injectImageFromPath(task string) string {
 	}
 
 	return task // no image found
+}
+
+// imageFilenameFromInput extracts just the base filename of any image path found in input.
+func imageFilenameFromInput(input string) string {
+	exts := []string{".png", ".jpg", ".jpeg", ".gif", ".webp"}
+	lower := strings.ToLower(input)
+	for _, ext := range exts {
+		idx := strings.Index(lower, ext)
+		if idx == -1 {
+			continue
+		}
+		end := idx + len(ext)
+		start := 0
+		for i := idx - 1; i >= 0; i-- {
+			ch := input[i]
+			if ch == ' ' || ch == '\t' {
+				if i > 0 && input[i-1] == '\\' {
+					i--
+					continue
+				}
+				start = i + 1
+				break
+			}
+		}
+		candidate := strings.ReplaceAll(input[start:end], "\\ ", " ")
+		if _, err := os.Stat(candidate); err == nil {
+			return filepath.Base(candidate)
+		}
+	}
+	return ""
 }
 
 func makeProvider(model string, cfg *config.Config) (providers.Provider, error) {
