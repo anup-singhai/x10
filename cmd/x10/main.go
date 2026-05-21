@@ -145,15 +145,37 @@ func main() {
 						}
 					}
 					
-					strategy := agent.DefaultStrategy()
-					model = strategy.SelectModel(taskStr, codeIdx)
+					// no cloud key but local model available — skip cloud selection
+					if cfg.AnthropicKey == "" && cfg.OpenAIKey == "" && cfg.GroqKey == "" {
+						if lm, ok := local.BestAvailableModel(); ok {
+							model = lm
+						}
+					} else {
+						strategy := agent.DefaultStrategy()
+						model = strategy.SelectModel(taskStr, codeIdx)
+					}
 				} else {
 					model = cfg.DefaultModel
 				}
 			}
 
 			if model == "" {
-				model = "claude-sonnet-4-6"
+				// prefer downloaded local model; fall back to cloud if key set
+				if localModel, ok := local.BestAvailableModel(); ok {
+					model = localModel
+				} else if cfg.AnthropicKey != "" {
+					model = "claude-sonnet-4-6"
+				} else if cfg.OpenAIKey != "" {
+					model = "gpt-4o"
+				} else if cfg.GroqKey != "" {
+					model = "groq:llama-3.3-70b-versatile"
+				} else {
+					fmt.Println("no model configured.\n")
+					fmt.Println("  local (no API key):  x10 models pull qwen-coder")
+					fmt.Println("  free cloud:          x10 config set groq-key <key>  (console.groq.com)")
+					fmt.Println("  anthropic:           x10 config set anthropic-key <key>")
+					return nil
+				}
 			}
 
 			provider, model, err := makeProvider(model, cfg)
@@ -240,15 +262,23 @@ func main() {
 		Use:   "list",
 		Short: "List available local models",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Println("Available local models (use with: x10 -m local:<id>)\n")
-			for _, m := range local.Catalog {
-				tool := ""
-				if m.ToolCall {
-					tool = " ✓ tools"
-				}
-				fmt.Printf("  %-18s  %-8s  %s%s\n", m.ID, m.Size, m.Desc, tool)
+			downloaded := make(map[string]bool)
+			for _, id := range local.ListDownloaded() {
+				downloaded[id] = true
 			}
-			fmt.Println("\nModels are cached in ~/.x10/models/ after first download.")
+			fmt.Println("Local SLMs  (x10 -m local:<id>)\n")
+			for _, m := range local.Catalog {
+				status := "  "
+				if downloaded[m.ID] {
+					status = "✓ "
+				}
+				tools := ""
+				if m.ToolCall {
+					tools = "  tools✓"
+				}
+				fmt.Printf("  %s%-18s  %-8s  %s%s\n", status, m.ID, m.Size, m.Desc, tools)
+			}
+			fmt.Println("\n✓ = downloaded   pull with: x10 models pull <id>")
 			return nil
 		},
 	}

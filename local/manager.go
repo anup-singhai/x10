@@ -311,3 +311,26 @@ func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }
+
+// BestAvailableModel returns the ID of the best already-downloaded model,
+// or ("", false) if nothing is cached yet.
+// Preference order matches quality/capability ranking in Catalog.
+func BestAvailableModel() (string, bool) {
+	for _, m := range Catalog {
+		if fileExists(modelPath(m)) {
+			return "local:" + m.ID, true
+		}
+	}
+	return "", false
+}
+
+// ListDownloaded returns the IDs of all locally cached models.
+func ListDownloaded() []string {
+	var out []string
+	for _, m := range Catalog {
+		if fileExists(modelPath(m)) {
+			out = append(out, m.ID)
+		}
+	}
+	return out
+}
